@@ -1,0 +1,6 @@
+{
+  "name": "PulseDownloader",
+  "description": "Gestor de descargas rápido y minimalista con capturador de enlaces, colas optimizadas, organización por carpetas y respaldo en Google Drive.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
