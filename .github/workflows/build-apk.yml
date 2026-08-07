@@ -27,16 +27,21 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
-      - name: Prepare Debug Keystore
+      - name: Prepare Environment and Keystore
         run: |
+          if [ ! -f ".env" ] && [ -f ".env.example" ]; then
+            cp .env.example .env
+          fi
           if [ -f "debug.keystore.base64" ]; then
-            base64 -d debug.keystore.base64 > debug.keystore
-          else
+            tr -d '\r\n\t ' < debug.keystore.base64 | base64 --decode > debug.keystore 2>/dev/null || base64 -d debug.keystore.base64 > debug.keystore 2>/dev/null || true
+          fi
+          if [ ! -s "debug.keystore" ]; then
+            echo "Generating fallback debug keystore..."
             keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
           fi
 
       - name: Build APK with Gradle
-        run: gradle :app:assembleDebug --stacktrace
+        run: gradle :app:assembleDebug --stacktrace --no-daemon --no-configuration-cache
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
