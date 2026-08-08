@@ -24,6 +24,7 @@ class DownloadRepository(private val context: Context) {
     val queueManager = QueueDownloadManager(context, downloadDao)
     val driveBackupEngine = GoogleDriveBackupEngine(downloadDao)
     val remoteServerEngine = RemoteQueueServerEngine()
+    val backgroundMonitor = com.example.engine.BackgroundLinkMonitor(context)
 
     val allDownloads: Flow<List<DownloadItem>> = downloadDao.getAllDownloads()
     val activeQueue: Flow<List<DownloadItem>> = downloadDao.getActiveQueue()
@@ -71,6 +72,27 @@ class DownloadRepository(private val context: Context) {
                 domain = link.domain,
                 targetFolderPath = currentFolder,
                 thumbnailUrl = link.thumbnailUrl
+            )
+        }
+        downloadDao.insertAll(items)
+    }
+
+    suspend fun addCapturedLinksToQueue(
+        capturedItems: List<com.example.engine.CapturedLinkItem>,
+        customFolderPath: String? = null
+    ) {
+        val currentFolder = customFolderPath ?: settings.value.globalDownloadDirectory
+        val items = capturedItems.map { captured ->
+            DownloadItem(
+                fileName = captured.title,
+                fileUrl = captured.url,
+                mediaType = captured.mediaType,
+                fileSizeBytes = if (captured.mediaType == "VIDEO") 25_000_000L else 10_000_000L,
+                downloadedBytes = 0L,
+                status = "PENDING",
+                sourceUrl = captured.url,
+                domain = captured.domain,
+                targetFolderPath = currentFolder
             )
         }
         downloadDao.insertAll(items)

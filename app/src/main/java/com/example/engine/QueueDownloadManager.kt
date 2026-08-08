@@ -144,45 +144,56 @@ class QueueDownloadManager(
         var downloadedBytes = if (targetFile.exists()) targetFile.length() else 0L
 
         try {
-            val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            val isTikTok = item.fileUrl.contains("tiktok") || item.fileUrl.contains("akamaized") || item.fileUrl.contains("tikwm") || item.domain.contains("tiktok")
+            val isInstagram = item.fileUrl.contains("cdninstagram") || item.fileUrl.contains("fbcdn") || item.domain.contains("instagram")
+
+            val userAgent = if (isTikTok) {
+                "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
+            } else {
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            }
+
+            val referer = when {
+                isTikTok -> "https://www.tikwm.com/"
+                isInstagram -> "https://www.instagram.com/"
+                item.sourceUrl.isNotBlank() -> item.sourceUrl
+                item.domain.isNotBlank() -> "https://${item.domain}/"
+                else -> "https://google.com/"
+            }
+
             val requestBuilder = Request.Builder()
                 .url(item.fileUrl)
                 .header("User-Agent", userAgent)
                 .header("Accept", "*/*")
-                .header("Accept-Language", "en-US,en;q=0.9,es;q=0.8")
+                .header("Accept-Language", "es-ES,es;q=0.9,en-US;q=0.8,en;q=0.7")
+                .header("Referer", referer)
 
-            if (item.sourceUrl.isNotBlank()) {
-                requestBuilder.header("Referer", item.sourceUrl)
-            } else if (item.domain.isNotBlank()) {
-                requestBuilder.header("Referer", "https://${item.domain}/")
-            }
-
-            if (downloadedBytes > 0) {
+            if (downloadedBytes > 0 && !isTikTok) {
                 requestBuilder.header("Range", "bytes=$downloadedBytes-")
             }
 
             val request = requestBuilder.build()
-            val response = client.newCall(request).execute()
+            var response = client.newCall(request).execute()
 
             if (!response.isSuccessful && response.code != 206) {
-                if (response.code == 416) {
+                // Retry clean stream without range header for 403 / 416 CDN errors
+                if (response.code == 416 || response.code == 403 || response.code == 401) {
                     downloadedBytes = 0L
                     if (targetFile.exists()) targetFile.delete()
-                    val retryResponse = client.newCall(
-                        Request.Builder()
-                            .url(item.fileUrl)
-                            .header("User-Agent", userAgent)
-                            .header("Accept", "*/*")
-                            .build()
-                    ).execute()
+                    val retryRequest = Request.Builder()
+                        .url(item.fileUrl)
+                        .header("User-Agent", userAgent)
+                        .header("Referer", referer)
+                        .header("Accept", "*/*")
+                        .build()
 
-                    if (!retryResponse.isSuccessful) {
-                        throw IOException("HTTP ${retryResponse.code}: ${retryResponse.message}")
+                    response = client.newCall(retryRequest).execute()
+                    if (!response.isSuccessful) {
+                        throw IOException("HTTP ${response.code}: ${response.message}")
                     }
-                    streamResponseBodyToFile(retryResponse, item, currentItem, targetDir, targetFile, downloadedBytes)
-                    return
+                } else {
+                    throw IOException("HTTP ${response.code}: ${response.message}")
                 }
-                throw IOException("HTTP ${response.code}: ${response.message}")
             }
 
             streamResponseBodyToFile(response, item, currentItem, targetDir, targetFile, downloadedBytes)

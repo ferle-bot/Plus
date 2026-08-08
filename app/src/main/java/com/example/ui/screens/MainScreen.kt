@@ -126,6 +126,8 @@ fun MainScreen(viewModel: PulseViewModel) {
     val driveSyncState by viewModel.driveSyncState.collectAsState()
     val remoteLogs by viewModel.remoteLogs.collectAsState()
     val isRemoteRunning by viewModel.isRemoteServerRunning.collectAsState()
+    val capturedLinks by viewModel.capturedLinks.collectAsState()
+    val isMonitoringBackground by viewModel.isMonitoringBackground.collectAsState()
 
     Scaffold(
         topBar = {
@@ -270,6 +272,15 @@ fun MainScreen(viewModel: PulseViewModel) {
                         lastResult = lastGrabResult,
                         globalDownloadDir = settings.globalDownloadDirectory,
                         autoOrganizeMode = settings.autoOrganizeBy,
+                        capturedLinks = capturedLinks,
+                        isMonitoringBackground = isMonitoringBackground,
+                        onToggleBackgroundMonitoring = viewModel::toggleBackgroundMonitoring,
+                        onAddCapturedToQueue = { items, folder ->
+                            viewModel.addCapturedLinksToQueue(items, folder)
+                            currentTab = 0
+                        },
+                        onRemoveCapturedItem = viewModel::removeCapturedItem,
+                        onClearAllCaptured = viewModel::clearAllCaptured,
                         onExamineUrl = viewModel::examineUrl,
                         onAddLinksToQueue = { links, folder ->
                             viewModel.addGrabbedLinksToQueue(links, folder)

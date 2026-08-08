@@ -36,8 +36,33 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
     val remoteLogs = repository.remoteServerEngine.remoteLogs
     val isRemoteServerRunning = repository.remoteServerEngine.isServerRunning
 
+    val capturedLinks = repository.backgroundMonitor.capturedLinks
+    val isMonitoringBackground = repository.backgroundMonitor.isMonitoring
+
     init {
         // ViewModel initialized cleanly
+    }
+
+    fun toggleBackgroundMonitoring(enabled: Boolean) {
+        repository.backgroundMonitor.toggleMonitoring(enabled)
+    }
+
+    fun addManualCapturedUrl(url: String) {
+        repository.backgroundMonitor.addManualCapturedUrl(url)
+    }
+
+    fun addCapturedLinksToQueue(capturedItems: List<com.example.engine.CapturedLinkItem>, customFolder: String? = null) {
+        viewModelScope.launch {
+            repository.addCapturedLinksToQueue(capturedItems, customFolder)
+        }
+    }
+
+    fun removeCapturedItem(id: Long) {
+        repository.backgroundMonitor.removeCapturedItem(id)
+    }
+
+    fun clearAllCaptured() {
+        repository.backgroundMonitor.clearAllCaptured()
     }
 
     fun examineUrl(url: String) {

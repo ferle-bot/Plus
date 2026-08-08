@@ -38,6 +38,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -86,6 +88,114 @@ fun DriveRemoteScreen(
     onInjectRemoteTestLink: () -> Unit
 ) {
     var folderInput by remember { mutableStateOf(settings.googleDriveFolder) }
+    var showAccountDialog by remember { mutableStateOf(false) }
+    var customEmailInput by remember { mutableStateOf("") }
+
+    if (showAccountDialog) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showAccountDialog = false },
+            containerColor = DarkCardBg,
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.AccountCircle,
+                        contentDescription = null,
+                        tint = NeonCyan,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Vincular Cuenta de Google Drive",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = TextPrimary
+                    )
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = "Selecciona o escribe el correo de Google Drive donde deseas guardar los respaldos y probar sincronización:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary
+                    )
+
+                    val accountPresets = listOf(
+                        "Cuenta Hermano (Pruebas)" to "hermano.prueba@gmail.com",
+                        "Fernando García Langle" to "fernando.garcia.langle@gmail.com",
+                        "Cuenta Personal Google" to "usuario.google@gmail.com"
+                    )
+
+                    accountPresets.forEach { (label, email) ->
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .border(
+                                    1.dp,
+                                    if (settings.googleDriveUserEmail == email) NeonCyan else DarkBorder,
+                                    RoundedCornerShape(10.dp)
+                                )
+                                .clickable {
+                                    onToggleGoogleAccount(email)
+                                    showAccountDialog = false
+                                },
+                            color = DarkSurface
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column {
+                                    Text(text = label, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), color = TextPrimary)
+                                    Text(text = email, style = MaterialTheme.typography.labelSmall, color = TextMuted)
+                                }
+                                if (settings.googleDriveUserEmail == email) {
+                                    Icon(imageVector = Icons.Default.CheckCircle, contentDescription = null, tint = NeonCyan, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(text = "O introduce otro correo de Google:", style = MaterialTheme.typography.labelSmall, color = TextMuted)
+
+                    OutlinedTextField(
+                        value = customEmailInput,
+                        onValueChange = { customEmailInput = it },
+                        placeholder = { Text("ejemplo.hermano@gmail.com", color = TextMuted) },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = NeonCyan,
+                            unfocusedBorderColor = DarkBorder,
+                            focusedTextColor = TextPrimary,
+                            unfocusedTextColor = TextPrimary
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (customEmailInput.isNotBlank()) {
+                            onToggleGoogleAccount(customEmailInput.trim())
+                        }
+                        showAccountDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = NeonCyan, contentColor = DarkSurface),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("Conectar Cuenta", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAccountDialog = false }) {
+                    Text("Cancelar", color = TextMuted)
+                }
+            }
+        )
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -202,13 +312,7 @@ fun DriveRemoteScreen(
                             }
 
                             Button(
-                                onClick = {
-                                    if (settings.googleDriveUserEmail != null) {
-                                        onToggleGoogleAccount(null)
-                                    } else {
-                                        onToggleGoogleAccount("fernando.garcia.langle@gmail.com")
-                                    }
-                                },
+                                onClick = { showAccountDialog = true },
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = if (settings.googleDriveUserEmail != null) DarkCardBg else NeonCyan,
                                     contentColor = if (settings.googleDriveUserEmail != null) TextSecondary else DarkSurface
@@ -217,7 +321,7 @@ fun DriveRemoteScreen(
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                             ) {
                                 Text(
-                                    text = if (settings.googleDriveUserEmail != null) "Desconectar" else "Acceder Google",
+                                    text = if (settings.googleDriveUserEmail != null) "Cambiar Cuenta" else "Acceder Google",
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold
                                 )
