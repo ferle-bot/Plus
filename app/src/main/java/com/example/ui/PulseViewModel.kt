@@ -37,74 +37,7 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
     val isRemoteServerRunning = repository.remoteServerEngine.isServerRunning
 
     init {
-        // Pre-populate with sample downloads for immediate rich UI testing if empty
-        viewModelScope.launch {
-            repository.allDownloads.collect { list ->
-                if (list.isEmpty()) {
-                    seedSampleData()
-                }
-            }
-        }
-    }
-
-    private suspend fun seedSampleData() {
-        val samples = listOf(
-            DownloadItem(
-                fileName = "IG_fernando_Photo_01.jpg",
-                fileUrl = "https://instagram.com/media/ig_fernando_photo_01.jpg",
-                mediaType = "IMAGE",
-                fileSizeBytes = 3_450_000L,
-                downloadedBytes = 1_820_000L,
-                status = "DOWNLOADING",
-                downloadSpeedBytesPerSec = 4_200_000L,
-                etaSeconds = 2L,
-                sourceUrl = "https://instagram.com/fernando.garcia.langle",
-                domain = "instagram.com",
-                targetFolderPath = "Downloads/PulseDownloader/2026-08-06",
-                thumbnailUrl = "https://picsum.photos/id/1015/800/800"
-            ),
-            DownloadItem(
-                fileName = "IG_Reel_Video_02.mp4",
-                fileUrl = "https://instagram.com/media/ig_reel_video_02.mp4",
-                mediaType = "VIDEO",
-                fileSizeBytes = 24_800_000L,
-                downloadedBytes = 6_100_000L,
-                status = "DOWNLOADING",
-                downloadSpeedBytesPerSec = 5_800_000L,
-                etaSeconds = 3L,
-                sourceUrl = "https://instagram.com/fernando.garcia.langle",
-                domain = "instagram.com",
-                targetFolderPath = "Downloads/PulseDownloader/2026-08-06",
-                thumbnailUrl = "https://picsum.photos/id/1084/800/1200"
-            ),
-            DownloadItem(
-                fileName = "Wallpaper_4K_Unsplash_12.jpg",
-                fileUrl = "https://images.unsplash.com/photo-12.jpg",
-                mediaType = "IMAGE",
-                fileSizeBytes = 8_200_000L,
-                downloadedBytes = 0L,
-                status = "PENDING",
-                sourceUrl = "https://unsplash.com",
-                domain = "unsplash.com",
-                targetFolderPath = "Downloads/PulseDownloader/Imagenes",
-                thumbnailUrl = "https://picsum.photos/id/1025/800/600"
-            ),
-            DownloadItem(
-                fileName = "Dataset_Backup_Archive.zip",
-                fileUrl = "https://archive.org/download/dataset_2026.zip",
-                mediaType = "ARCHIVE",
-                fileSizeBytes = 45_000_000L,
-                downloadedBytes = 45_000_000L,
-                status = "COMPLETED",
-                completedAtTimestamp = System.currentTimeMillis() - 3600000,
-                sourceUrl = "https://archive.org",
-                domain = "archive.org",
-                targetFolderPath = "Downloads/PulseDownloader/Archivos_ZIP",
-                driveSynced = true,
-                driveFileId = "drive_99182312"
-            )
-        )
-        repository.downloadDao.insertAll(samples)
+        // ViewModel initialized cleanly
     }
 
     fun examineUrl(url: String) {

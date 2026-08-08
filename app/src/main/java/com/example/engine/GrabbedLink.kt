@@ -18,5 +18,7 @@ data class WebGrabResult(
     val sourceUrl: String,
     val domain: String,
     val totalLinksFound: Int,
-    val links: List<GrabbedLink>
+    val links: List<GrabbedLink>,
+    val errorMessage: String? = null,
+    val infoMessage: String? = null
 )

@@ -11,227 +11,260 @@ import java.util.regex.Pattern
 class LinkGrabberEngine {
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
         .followRedirects(true)
+        .followSslRedirects(true)
         .build()
 
     suspend fun examinePageUrl(rawUrl: String): WebGrabResult = withContext(Dispatchers.IO) {
         val trimmedUrl = rawUrl.trim()
+        if (trimmedUrl.isBlank()) {
+            return@withContext WebGrabResult(
+                pageTitle = "URL Vacía",
+                sourceUrl = rawUrl,
+                domain = "",
+                totalLinksFound = 0,
+                links = emptyList(),
+                errorMessage = "Por favor ingresa una URL válida."
+            )
+        }
+
         val formattedUrl = if (!trimmedUrl.startsWith("http://") && !trimmedUrl.startsWith("https://")) {
             "https://$trimmedUrl"
         } else trimmedUrl
 
         val domain = extractDomain(formattedUrl)
 
-        // Check specialized extractors
-        if (domain.contains("instagram.com")) {
-            return@withContext extractInstagramMedia(formattedUrl)
-        } else if (domain.contains("unsplash.com") || domain.contains("pexels.com")) {
-            return@withContext extractGalleryMedia(formattedUrl, domain)
-        } else if (isDirectFileUrl(formattedUrl)) {
-            return@withContext extractDirectFile(formattedUrl, domain)
-        }
-
-        // Generic HTTP sniffer
-        return@withContext performGenericWebSniffing(formattedUrl, domain)
+        return@withContext performRealWebSniffing(formattedUrl, domain)
     }
 
-    private fun extractInstagramMedia(url: String): WebGrabResult {
-        val username = if (url.contains("/p/")) "Post_Media" else url.substringAfter("instagram.com/").substringBefore("/").substringBefore("?")
-        val displayUser = if (username.isBlank() || username.contains("http")) "Instagram_Account" else username
-
-        val items = mutableListOf<GrabbedLink>()
-
-        val sampleImages = listOf(
-            "https://picsum.photos/id/1015/1080/1350" to "1080x1350",
-            "https://picsum.photos/id/1025/1080/1080" to "1080x1080",
-            "https://picsum.photos/id/1035/1080/1350" to "1080x1350",
-            "https://picsum.photos/id/1040/1080/1080" to "1080x1080",
-            "https://picsum.photos/id/1069/1080/1350" to "1080x1350",
-            "https://picsum.photos/id/1080/1080/1080" to "1080x1080"
-        )
-
-        sampleImages.forEachIndexed { index, (thumbUrl, dims) ->
-            val num = (index + 1).toString().padStart(2, '0')
-            items.add(
-                GrabbedLink(
-                    url = "https://instagram.com/media/ig_${displayUser}_photo_$num.jpg",
-                    title = "Instagram Photo #$num - @$displayUser",
-                    suggestedFileName = "IG_${displayUser}_Photo_$num.jpg",
-                    mediaType = "IMAGE",
-                    estimatedSizeBytes = (2_400_000..4_800_000).random().toLong(),
-                    thumbnailUrl = thumbUrl,
-                    dimensions = dims,
-                    sourcePageUrl = url,
-                    domain = "instagram.com"
-                )
-            )
-        }
-
-        // Add 2 Reels / Video links
-        listOf("01", "02").forEach { num ->
-            items.add(
-                GrabbedLink(
-                    url = "https://instagram.com/media/ig_${displayUser}_reel_$num.mp4",
-                    title = "Instagram Reel HD - @$displayUser",
-                    suggestedFileName = "IG_${displayUser}_Reel_$num.mp4",
-                    mediaType = "VIDEO",
-                    estimatedSizeBytes = (14_500_000..32_000_000).random().toLong(),
-                    thumbnailUrl = "https://picsum.photos/id/1084/1080/1920",
-                    dimensions = "1080x1920 60fps",
-                    sourcePageUrl = url,
-                    domain = "instagram.com"
-                )
-            )
-        }
-
-        return WebGrabResult(
-            pageTitle = "Perfil de Instagram: @$displayUser",
-            sourceUrl = url,
-            domain = "instagram.com",
-            totalLinksFound = items.size,
-            links = items
-        )
-    }
-
-    private fun extractGalleryMedia(url: String, domain: String): WebGrabResult {
-        val items = mutableListOf<GrabbedLink>()
-        val ids = listOf(10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22)
-        ids.forEachIndexed { index, id ->
-            val num = (index + 1).toString().padStart(2, '0')
-            items.add(
-                GrabbedLink(
-                    url = "https://images.unsplash.com/photo-$id-highres.jpg",
-                    title = "Wallpaper Photo HD #$num",
-                    suggestedFileName = "Gallery_Unsplash_HD_$num.jpg",
-                    mediaType = "IMAGE",
-                    estimatedSizeBytes = (3_500_000..8_200_000).random().toLong(),
-                    thumbnailUrl = "https://picsum.photos/id/$id/800/600",
-                    dimensions = "3840x2160 (4K)",
-                    sourcePageUrl = url,
-                    domain = domain
-                )
-            )
-        }
-        return WebGrabResult(
-            pageTitle = "Galería de imágenes HD ($domain)",
-            sourceUrl = url,
-            domain = domain,
-            totalLinksFound = items.size,
-            links = items
-        )
-    }
-
-    private fun extractDirectFile(url: String, domain: String): WebGrabResult {
-        val fileName = url.substringAfterLast("/").substringBefore("?")
-            .ifBlank { "download_file.bin" }
-        val ext = fileName.substringAfterLast(".", "bin").lowercase()
-        val mediaType = classifyExtension(ext)
-
-        val item = GrabbedLink(
-            url = url,
-            title = fileName,
-            suggestedFileName = fileName,
-            mediaType = mediaType,
-            estimatedSizeBytes = 18_400_000L,
-            thumbnailUrl = if (mediaType == "IMAGE") url else null,
-            dimensions = null,
-            sourcePageUrl = url,
-            domain = domain
-        )
-        return WebGrabResult(
-            pageTitle = "Enlace directo de archivo",
-            sourceUrl = url,
-            domain = domain,
-            totalLinksFound = 1,
-            links = listOf(item)
-        )
-    }
-
-    private fun performGenericWebSniffing(url: String, domain: String): WebGrabResult {
-        val items = mutableListOf<GrabbedLink>()
+    private fun performRealWebSniffing(url: String, domain: String): WebGrabResult {
         try {
             val request = Request.Builder()
                 .url(url)
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) PulseDownloader/1.0")
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .header("Accept", "*/*")
                 .build()
 
             client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    return WebGrabResult(
+                        pageTitle = domain,
+                        sourceUrl = url,
+                        domain = domain,
+                        totalLinksFound = 0,
+                        links = emptyList(),
+                        errorMessage = "Error al conectar con la página web: HTTP ${response.code} ${response.message}"
+                    )
+                }
+
+                val contentType = response.header("Content-Type").orEmpty().lowercase()
+                val contentDisposition = response.header("Content-Disposition").orEmpty()
+                val contentLength = response.body?.contentLength() ?: -1L
+
+                // Check if the URL points directly to a downloadable file
+                if (isDirectFileContentType(contentType) || isDirectFileDisposition(contentDisposition) || isDirectFileExtension(url)) {
+                    val fileName = extractFileNameFromHeaderOrUrl(url, contentDisposition)
+                    val mediaType = classifyMediaType(contentType, fileName)
+
+                    val directLink = GrabbedLink(
+                        url = response.request.url.toString(),
+                        title = fileName,
+                        suggestedFileName = fileName,
+                        mediaType = mediaType,
+                        estimatedSizeBytes = if (contentLength > 0) contentLength else 0L,
+                        thumbnailUrl = if (mediaType == "IMAGE") url else null,
+                        dimensions = null,
+                        sourcePageUrl = url,
+                        domain = domain
+                    )
+
+                    return WebGrabResult(
+                        pageTitle = fileName,
+                        sourceUrl = url,
+                        domain = domain,
+                        totalLinksFound = 1,
+                        links = listOf(directLink)
+                    )
+                }
+
+                // Parse HTML document for downloadable media/file links
                 val html = response.body?.string().orEmpty()
                 val pageTitle = extractTitleFromHtml(html) ?: domain
 
-                // Extract image tags
-                val imgPattern = Pattern.compile("(?i)<img[^>]+src=[\"']?([^\"'>]+)[\"']?")
+                val foundLinks = mutableListOf<GrabbedLink>()
+                val seenUrls = mutableSetOf<String>()
+
+                // 1. Extract <img src="...">
+                val imgPattern = Pattern.compile("(?i)<img[^>]+src=[\"']?([^\"'>\\s]+)[\"']?")
                 val imgMatcher = imgPattern.matcher(html)
-                var count = 0
-                while (imgMatcher.find() && count < 15) {
+                var imgCount = 0
+                while (imgMatcher.find() && imgCount < 30) {
                     val rawSrc = imgMatcher.group(1) ?: continue
-                    val fullSrc = resolveRelativeUrl(url, rawSrc)
-                    if (fullSrc.isNotBlank()) {
-                        val fileName = fullSrc.substringAfterLast("/").substringBefore("?").ifBlank { "image_$count.jpg" }
-                        items.add(
+                    val fullUrl = resolveRelativeUrl(url, rawSrc)
+                    if (isValidMediaUrl(fullUrl) && seenUrls.add(fullUrl)) {
+                        val fileName = extractFileNameFromUrl(fullUrl, "imagen_${imgCount + 1}.jpg")
+                        foundLinks.add(
                             GrabbedLink(
-                                url = fullSrc,
-                                title = "Imagen Web #$count ($fileName)",
+                                url = fullUrl,
+                                title = "Imagen: $fileName",
                                 suggestedFileName = fileName,
                                 mediaType = "IMAGE",
-                                estimatedSizeBytes = (1_200_000..5_000_000).random().toLong(),
-                                thumbnailUrl = fullSrc,
-                                dimensions = "1920x1080",
+                                estimatedSizeBytes = 0L,
+                                thumbnailUrl = fullUrl,
+                                dimensions = null,
                                 sourcePageUrl = url,
                                 domain = domain
                             )
                         )
-                        count++
+                        imgCount++
                     }
                 }
 
-                // Extract video / audio / anchor download links
-                val hrefPattern = Pattern.compile("(?i)<a[^>]+href=[\"']?([^\"'>]+)[\"']?")
-                val hrefMatcher = hrefPattern.matcher(html)
-                var linkCount = 0
-                while (hrefMatcher.find() && linkCount < 10) {
-                    val rawHref = hrefMatcher.group(1) ?: continue
-                    val fullHref = resolveRelativeUrl(url, rawHref)
-                    val ext = fullHref.substringAfterLast(".", "").lowercase().substringBefore("?").substringBefore("#")
-                    if (ext in listOf("mp4", "mkv", "mp3", "pdf", "zip", "rar", "7z", "iso", "doc", "docx")) {
-                        val fileName = fullHref.substringAfterLast("/").substringBefore("?")
+                // 2. Extract <video src="...">, <audio src="...">, <source src="...">
+                val mediaSourcePattern = Pattern.compile("(?i)<(?:video|audio|source)[^>]+src=[\"']?([^\"'>\\s]+)[\"']?")
+                val mediaMatcher = mediaSourcePattern.matcher(html)
+                var mediaCount = 0
+                while (mediaMatcher.find() && mediaCount < 20) {
+                    val rawSrc = mediaMatcher.group(1) ?: continue
+                    val fullUrl = resolveRelativeUrl(url, rawSrc)
+                    if (isValidMediaUrl(fullUrl) && seenUrls.add(fullUrl)) {
+                        val fileName = extractFileNameFromUrl(fullUrl, "media_${mediaCount + 1}.mp4")
+                        val ext = fileName.substringAfterLast(".", "mp4").lowercase()
                         val type = classifyExtension(ext)
-                        items.add(
+                        foundLinks.add(
                             GrabbedLink(
-                                url = fullHref,
-                                title = "Archivo extraído: $fileName",
+                                url = fullUrl,
+                                title = "Medio: $fileName",
                                 suggestedFileName = fileName,
                                 mediaType = type,
-                                estimatedSizeBytes = (8_000_000..45_000_000).random().toLong(),
+                                estimatedSizeBytes = 0L,
                                 thumbnailUrl = null,
-                                dimensions = if (type == "VIDEO") "1080p HD" else null,
+                                dimensions = if (type == "VIDEO") "Video Web" else null,
                                 sourcePageUrl = url,
                                 domain = domain
                             )
                         )
-                        linkCount++
+                        mediaCount++
                     }
                 }
 
-                if (items.isEmpty()) {
-                    // Fallback simulated extracted media for rich demo experience
-                    return extractGalleryMedia(url, domain)
+                // 3. Extract Meta tags og:image and og:video
+                val ogPattern = Pattern.compile("(?i)<meta[^>]+property=[\"']og:(image|video)[\"'][^>]+content=[\"']?([^\"'>\\s]+)[\"']?")
+                val ogMatcher = ogPattern.matcher(html)
+                while (ogMatcher.find()) {
+                    val ogType = ogMatcher.group(1) ?: "image"
+                    val rawContent = ogMatcher.group(2) ?: continue
+                    val fullUrl = resolveRelativeUrl(url, rawContent)
+                    if (isValidMediaUrl(fullUrl) && seenUrls.add(fullUrl)) {
+                        val isVideo = ogType.equals("video", ignoreCase = true)
+                        val fileName = extractFileNameFromUrl(fullUrl, if (isVideo) "og_video.mp4" else "og_image.jpg")
+                        foundLinks.add(
+                            GrabbedLink(
+                                url = fullUrl,
+                                title = if (isVideo) "Video principal (og:video)" else "Imagen principal (og:image)",
+                                suggestedFileName = fileName,
+                                mediaType = if (isVideo) "VIDEO" else "IMAGE",
+                                estimatedSizeBytes = 0L,
+                                thumbnailUrl = if (!isVideo) fullUrl else null,
+                                dimensions = null,
+                                sourcePageUrl = url,
+                                domain = domain
+                            )
+                        )
+                    }
+                }
+
+                // 4. Extract Anchor download links <a href="...">
+                val anchorPattern = Pattern.compile("(?i)<a[^>]+href=[\"']?([^\"'>\\s]+)[\"']?")
+                val anchorMatcher = anchorPattern.matcher(html)
+                var fileCount = 0
+                while (anchorMatcher.find() && fileCount < 25) {
+                    val rawHref = anchorMatcher.group(1) ?: continue
+                    val fullUrl = resolveRelativeUrl(url, rawHref)
+                    val ext = fullUrl.substringAfterLast(".", "").lowercase().substringBefore("?").substringBefore("#")
+                    if (ext in listOf("mp4", "mkv", "mp3", "pdf", "zip", "rar", "7z", "iso", "doc", "docx", "xls", "xlsx", "apk", "jpg", "jpeg", "png", "webp", "gif")) {
+                        if (isValidMediaUrl(fullUrl) && seenUrls.add(fullUrl)) {
+                            val fileName = extractFileNameFromUrl(fullUrl, "archivo_${fileCount + 1}.$ext")
+                            val type = classifyExtension(ext)
+                            foundLinks.add(
+                                GrabbedLink(
+                                    url = fullUrl,
+                                    title = "Archivo: $fileName",
+                                    suggestedFileName = fileName,
+                                    mediaType = type,
+                                    estimatedSizeBytes = 0L,
+                                    thumbnailUrl = if (type == "IMAGE") fullUrl else null,
+                                    dimensions = null,
+                                    sourcePageUrl = url,
+                                    domain = domain
+                                )
+                            )
+                            fileCount++
+                        }
+                    }
+                }
+
+                if (foundLinks.isEmpty()) {
+                    return WebGrabResult(
+                        pageTitle = pageTitle,
+                        sourceUrl = url,
+                        domain = domain,
+                        totalLinksFound = 0,
+                        links = emptyList(),
+                        errorMessage = "No se encontraron archivos o medios directamente descargables en esta página HTML."
+                    )
                 }
 
                 return WebGrabResult(
                     pageTitle = pageTitle,
                     sourceUrl = url,
                     domain = domain,
-                    totalLinksFound = items.size,
-                    links = items
+                    totalLinksFound = foundLinks.size,
+                    links = foundLinks
                 )
             }
         } catch (e: Exception) {
-            // If offline or request fails, fallback gracefully with simulated extracted links
-            return extractInstagramMedia(url)
+            return WebGrabResult(
+                pageTitle = domain,
+                sourceUrl = url,
+                domain = domain,
+                totalLinksFound = 0,
+                links = emptyList(),
+                errorMessage = "Error de red: ${e.localizedMessage ?: e.message ?: "No se pudo conectar a la URL"}"
+            )
         }
+    }
+
+    private fun isDirectFileContentType(contentType: String): Boolean {
+        return contentType.startsWith("image/") ||
+                contentType.startsWith("video/") ||
+                contentType.startsWith("audio/") ||
+                contentType.contains("application/pdf") ||
+                contentType.contains("application/zip") ||
+                contentType.contains("application/x-rar") ||
+                contentType.contains("application/octet-stream")
+    }
+
+    private fun isDirectFileDisposition(disposition: String): Boolean {
+        return disposition.lowercase().contains("attachment")
+    }
+
+    private fun isDirectFileExtension(url: String): Boolean {
+        val cleanPath = url.substringBefore("?").substringBefore("#").lowercase()
+        val ext = cleanPath.substringAfterLast(".", "")
+        return ext in listOf("jpg", "jpeg", "png", "webp", "gif", "mp4", "mkv", "webm", "avi", "mp3", "flac", "pdf", "zip", "rar", "7z", "apk", "iso", "doc", "docx")
+    }
+
+    private fun classifyMediaType(contentType: String, fileName: String): String {
+        val ext = fileName.substringAfterLast(".", "").lowercase()
+        if (contentType.startsWith("image/") || ext in listOf("jpg", "jpeg", "png", "webp", "gif")) return "IMAGE"
+        if (contentType.startsWith("video/") || ext in listOf("mp4", "mkv", "webm", "avi", "mov")) return "VIDEO"
+        if (contentType.startsWith("audio/") || ext in listOf("mp3", "flac", "wav", "aac", "ogg")) return "AUDIO"
+        if (contentType.contains("zip") || contentType.contains("rar") || ext in listOf("zip", "rar", "7z", "tar", "gz")) return "ARCHIVE"
+        if (contentType.contains("pdf") || ext in listOf("pdf", "doc", "docx", "txt", "epub")) return "DOCUMENT"
+        return "OTHER"
     }
 
     private fun classifyExtension(ext: String): String {
@@ -251,15 +284,8 @@ class LinkGrabberEngine {
             val host = uri.host ?: url
             if (host.startsWith("www.")) host.substring(4) else host
         } catch (e: Exception) {
-            "website.com"
+            "sitio.com"
         }
-    }
-
-    private fun isDirectFileUrl(url: String): Boolean {
-        val path = url.substringBefore("?").lowercase()
-        return path.endsWith(".jpg") || path.endsWith(".png") || path.endsWith(".webp") ||
-                path.endsWith(".mp4") || path.endsWith(".zip") || path.endsWith(".pdf") ||
-                path.endsWith(".mp3") || path.endsWith(".mkv") || path.endsWith(".rar")
     }
 
     private fun extractTitleFromHtml(html: String): String? {
@@ -268,7 +294,21 @@ class LinkGrabberEngine {
         return if (matcher.find()) matcher.group(1)?.trim() else null
     }
 
+    private fun extractFileNameFromHeaderOrUrl(url: String, disposition: String): String {
+        if (disposition.isNotBlank() && disposition.contains("filename=")) {
+            val name = disposition.substringAfter("filename=").replace("\"", "").substringBefore(";")
+            if (name.isNotBlank()) return name.trim()
+        }
+        return extractFileNameFromUrl(url, "descarga.bin")
+    }
+
+    private fun extractFileNameFromUrl(url: String, fallback: String): String {
+        val rawName = url.substringBefore("?").substringBefore("#").substringAfterLast("/")
+        return if (rawName.isNotBlank() && rawName.contains(".")) rawName.trim() else fallback
+    }
+
     private fun resolveRelativeUrl(baseUrl: String, relative: String): String {
+        if (relative.startsWith("data:") || relative.startsWith("javascript:")) return ""
         return try {
             val base = URI(baseUrl)
             val resolved = base.resolve(relative)
@@ -276,5 +316,9 @@ class LinkGrabberEngine {
         } catch (e: Exception) {
             if (relative.startsWith("http")) relative else ""
         }
+    }
+
+    private fun isValidMediaUrl(url: String): Boolean {
+        return url.startsWith("http://") || url.startsWith("https://")
     }
 }

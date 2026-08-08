@@ -78,7 +78,7 @@ fun LinkGrabberScreen(
     onExamineUrl: (String) -> Unit,
     onAddLinksToQueue: (links: List<GrabbedLink>, customFolder: String?) -> Unit
 ) {
-    var urlInput by remember { mutableStateOf("https://instagram.com/fernando.garcia.langle") }
+    var urlInput by remember { mutableStateOf("") }
     var selectedCategoryFilter by remember { mutableStateOf("ALL") }
 
     // Multi-selection state
@@ -139,7 +139,7 @@ fun LinkGrabberScreen(
                     OutlinedTextField(
                         value = urlInput,
                         onValueChange = { urlInput = it },
-                        placeholder = { Text("Pega enlace web (ej. instagram.com/usuario)", color = TextMuted) },
+                        placeholder = { Text("Pega cualquier enlace web o URL de archivo...", color = TextMuted) },
                         singleLine = true,
                         leadingIcon = {
                             Icon(
@@ -200,9 +200,9 @@ fun LinkGrabberScreen(
             Spacer(modifier = Modifier.height(6.dp))
 
             val presets = listOf(
-                "📸 Mi Instagram" to "https://instagram.com/fernando.garcia.langle",
-                "🖼️ Unsplash 4K" to "https://unsplash.com/wallpapers",
-                "📦 Archivo Directo" to "https://archive.org/download/sample_pack.zip"
+                "📄 PDF de prueba" to "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
+                "🖼️ Imagen de prueba" to "https://picsum.photos/1024/768.jpg",
+                "📦 Archivo de prueba (1MB)" to "https://httpbin.org/bytes/1048576"
             )
 
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -260,81 +260,109 @@ fun LinkGrabberScreen(
                     }
                 }
             } else if (lastResult != null) {
-                // Results Header
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .border(1.dp, DarkBorder, RoundedCornerShape(12.dp)),
-                    color = DarkCardBg
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                if (lastResult.errorMessage != null || lastResult.totalLinksFound == 0) {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .border(1.dp, DarkBorder, RoundedCornerShape(12.dp)),
+                        color = DarkCardBg
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            Column {
-                                Text(
-                                    text = lastResult.pageTitle,
-                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                    color = TextPrimary
-                                )
-                                Text(
-                                    text = "${lastResult.totalLinksFound} enlaces encontrados en ${lastResult.domain}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = NeonCyan
-                                )
-                            }
-
-                            Row {
-                                TextButton(
-                                    onClick = {
-                                        selectedIndices.clear()
-                                        selectedIndices.addAll(currentLinks.indices)
-                                    }
-                                ) {
-                                    Text("Todos", fontSize = 12.sp, color = NeonCyan)
-                                }
-                                TextButton(
-                                    onClick = { selectedIndices.clear() }
-                                ) {
-                                    Text("Ninguno", fontSize = 12.sp, color = TextMuted)
-                                }
-                            }
+                            Text(
+                                text = "Resultado del Análisis",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                color = TextPrimary
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = lastResult.errorMessage ?: "No se encontraron enlaces o archivos multimedia en esta URL.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = TextSecondary,
+                                modifier = Modifier.padding(horizontal = 8.dp)
+                            )
                         }
-
-                        // Category Filter Chips
-                        Spacer(modifier = Modifier.height(8.dp))
-                        val categories = listOf(
-                            "ALL" to "Todos (${currentLinks.size})",
-                            "IMAGE" to "Fotos (${currentLinks.count { it.mediaType == "IMAGE" }})",
-                            "VIDEO" to "Videos (${currentLinks.count { it.mediaType == "VIDEO" }})",
-                            "ARCHIVE" to "Zips (${currentLinks.count { it.mediaType == "ARCHIVE" }})"
-                        )
-
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            items(categories) { (cat, label) ->
-                                val isSelected = selectedCategoryFilter == cat
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = if (isSelected) NeonCyan.copy(alpha = 0.2f) else DarkSurface,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .border(
-                                            1.dp,
-                                            if (isSelected) NeonCyan else DarkBorder,
-                                            RoundedCornerShape(8.dp)
-                                        )
-                                        .clickable { selectedCategoryFilter = cat }
-                                ) {
+                    }
+                } else {
+                    // Results Header
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .border(1.dp, DarkBorder, RoundedCornerShape(12.dp)),
+                        color = DarkCardBg
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = label,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                        fontSize = 11.sp,
-                                        color = if (isSelected) NeonCyan else TextSecondary,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                        text = lastResult.pageTitle,
+                                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                        color = TextPrimary
                                     )
+                                    Text(
+                                        text = "${lastResult.totalLinksFound} enlaces encontrados en ${lastResult.domain}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = NeonCyan
+                                    )
+                                }
+
+                                Row {
+                                    TextButton(
+                                        onClick = {
+                                            selectedIndices.clear()
+                                            selectedIndices.addAll(currentLinks.indices)
+                                        }
+                                    ) {
+                                        Text("Todos", fontSize = 12.sp, color = NeonCyan)
+                                    }
+                                    TextButton(
+                                        onClick = { selectedIndices.clear() }
+                                    ) {
+                                        Text("Ninguno", fontSize = 12.sp, color = TextMuted)
+                                    }
+                                }
+                            }
+
+                            // Category Filter Chips
+                            Spacer(modifier = Modifier.height(8.dp))
+                            val categories = listOf(
+                                "ALL" to "Todos (${currentLinks.size})",
+                                "IMAGE" to "Fotos (${currentLinks.count { it.mediaType == "IMAGE" }})",
+                                "VIDEO" to "Videos (${currentLinks.count { it.mediaType == "VIDEO" }})",
+                                "ARCHIVE" to "Zips (${currentLinks.count { it.mediaType == "ARCHIVE" }})"
+                            )
+
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                items(categories) { (cat, label) ->
+                                    val isSelected = selectedCategoryFilter == cat
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = if (isSelected) NeonCyan.copy(alpha = 0.2f) else DarkSurface,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .border(
+                                                1.dp,
+                                                if (isSelected) NeonCyan else DarkBorder,
+                                                RoundedCornerShape(8.dp)
+                                            )
+                                            .clickable { selectedCategoryFilter = cat }
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                            fontSize = 11.sp,
+                                            color = if (isSelected) NeonCyan else TextSecondary,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    }
                                 }
                             }
                         }
