@@ -25,6 +25,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Language
@@ -53,6 +55,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -78,6 +81,7 @@ fun LinkGrabberScreen(
     onExamineUrl: (String) -> Unit,
     onAddLinksToQueue: (links: List<GrabbedLink>, customFolder: String?) -> Unit
 ) {
+    val clipboardManager = LocalClipboardManager.current
     var urlInput by remember { mutableStateOf("") }
     var selectedCategoryFilter by remember { mutableStateOf("ALL") }
 
@@ -147,6 +151,39 @@ fun LinkGrabberScreen(
                                 contentDescription = null,
                                 tint = NeonCyan
                             )
+                        },
+                        trailingIcon = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (urlInput.isNotEmpty()) {
+                                    IconButton(
+                                        onClick = { urlInput = "" },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Limpiar enlace",
+                                            tint = TextMuted,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                                IconButton(
+                                    onClick = {
+                                        val clipText = clipboardManager.getText()?.text.orEmpty()
+                                        if (clipText.isNotBlank()) {
+                                            urlInput = clipText.trim()
+                                        }
+                                    },
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ContentPaste,
+                                        contentDescription = "Pegar enlace",
+                                        tint = NeonCyan,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
                         },
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = Color.Transparent,
