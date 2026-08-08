@@ -303,7 +303,12 @@ class QueueDownloadManager(
     }
 
     private fun resolveTargetDirectory(item: DownloadItem): File {
-        val baseDir = context.getExternalFilesDir(null) ?: context.filesDir
+        val publicDownloads = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+        val baseDir = if (publicDownloads != null && (publicDownloads.exists() || publicDownloads.mkdirs())) {
+            publicDownloads
+        } else {
+            context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir
+        }
         val subPath = when (currentSettings.autoOrganizeBy) {
             "DATE" -> {
                 val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
@@ -326,6 +331,12 @@ class QueueDownloadManager(
             }
             else -> currentSettings.globalDownloadDirectory
         }
-        return File(baseDir, subPath)
+        val targetDir = File(baseDir, subPath)
+        if (!targetDir.exists()) {
+            try {
+                targetDir.mkdirs()
+            } catch (_: Exception) {}
+        }
+        return targetDir
     }
 }

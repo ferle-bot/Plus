@@ -1,5 +1,10 @@
 package com.example.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +27,8 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -41,6 +48,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,9 +58,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.example.ui.PulseViewModel
 import com.example.ui.theme.DarkBorder
 import com.example.ui.theme.DarkCanvas
@@ -69,6 +79,42 @@ import com.example.ui.theme.TextSecondary
 fun MainScreen(viewModel: PulseViewModel) {
     var currentTab by remember { mutableStateOf(0) } // 0: Queue, 1: Grabber, 2: Files, 3: Drive/Remote
     var showSettingsSheet by remember { mutableStateOf(false) }
+
+    val context = LocalContext.current
+
+    val requiredPermissions = remember {
+        val list = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            list.add(Manifest.permission.POST_NOTIFICATIONS)
+            list.add(Manifest.permission.READ_MEDIA_IMAGES)
+            list.add(Manifest.permission.READ_MEDIA_VIDEO)
+            list.add(Manifest.permission.READ_MEDIA_AUDIO)
+        } else {
+            list.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+            list.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
+        list
+    }
+
+    var permissionsGranted by remember {
+        mutableStateOf(
+            requiredPermissions.all {
+                ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+            }
+        )
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        permissionsGranted = result.values.all { it }
+    }
+
+    LaunchedEffect(Unit) {
+        if (!permissionsGranted) {
+            permissionLauncher.launch(requiredPermissions.toTypedArray())
+        }
+    }
 
     val allDownloads by viewModel.allDownloads.collectAsState()
     val completedDownloads by viewModel.completedDownloads.collectAsState()
@@ -161,51 +207,91 @@ fun MainScreen(viewModel: PulseViewModel) {
         },
         containerColor = DarkCanvas
     ) { innerPadding ->
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            when (currentTab) {
-                0 -> QueueScreen(
-                    downloads = allDownloads,
-                    globalSpeedBytesPerSec = globalSpeedBytesPerSec,
-                    isGlobalQueuePaused = isGlobalQueuePaused,
-                    settings = settings,
-                    onPauseSingle = viewModel::pauseSingle,
-                    onResumeSingle = viewModel::resumeSingle,
-                    onCancelSingle = viewModel::cancelSingle,
-                    onPauseAll = viewModel::pauseAllQueue,
-                    onResumeAll = viewModel::resumeAllQueue,
-                    onClearCompleted = viewModel::clearCompleted,
-                    onUpdateSpeedLimit = viewModel::updateSpeedLimit
-                )
-                1 -> LinkGrabberScreen(
-                    isExamining = isExaminingUrl,
-                    lastResult = lastGrabResult,
-                    globalDownloadDir = settings.globalDownloadDirectory,
-                    autoOrganizeMode = settings.autoOrganizeBy,
-                    onExamineUrl = viewModel::examineUrl,
-                    onAddLinksToQueue = { links, folder ->
-                        viewModel.addGrabbedLinksToQueue(links, folder)
-                        currentTab = 0 // Switch to Queue tab after adding!
+            if (!permissionsGranted) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .border(1.dp, NeonCyan.copy(alpha = 0.5f), RoundedCornerShape(12.dp)),
+                    color = DarkCardBg
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Permisos de Almacenamiento y Red",
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                color = TextPrimary
+                            )
+                            Text(
+                                text = "Permite guardar archivos directamente en tu dispositivo y recibir notificaciones.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = TextSecondary
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = { permissionLauncher.launch(requiredPermissions.toTypedArray()) },
+                            colors = ButtonDefaults.buttonColors(containerColor = NeonCyan, contentColor = Color.Black),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("Permitir", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
-                )
-                2 -> StorageScreen(
-                    completedItems = completedDownloads,
-                    onTriggerDriveSync = viewModel::triggerDriveSync
-                )
-                3 -> DriveRemoteScreen(
-                    settings = settings,
-                    driveState = driveSyncState,
-                    remoteLogs = remoteLogs,
-                    isRemoteRunning = isRemoteRunning,
-                    onTriggerDriveSync = viewModel::triggerDriveSync,
-                    onUpdateDriveFolder = viewModel::setDriveFolder,
-                    onToggleGoogleAccount = viewModel::toggleGoogleAccount,
-                    onToggleRemoteServer = viewModel::toggleRemoteServer,
-                    onInjectRemoteTestLink = viewModel::injectRemoteTestLink
-                )
+                }
+            }
+
+            Box(modifier = Modifier.weight(1f)) {
+                when (currentTab) {
+                    0 -> QueueScreen(
+                        downloads = allDownloads,
+                        globalSpeedBytesPerSec = globalSpeedBytesPerSec,
+                        isGlobalQueuePaused = isGlobalQueuePaused,
+                        settings = settings,
+                        onPauseSingle = viewModel::pauseSingle,
+                        onResumeSingle = viewModel::resumeSingle,
+                        onCancelSingle = viewModel::cancelSingle,
+                        onPauseAll = viewModel::pauseAllQueue,
+                        onResumeAll = viewModel::resumeAllQueue,
+                        onClearCompleted = viewModel::clearCompleted,
+                        onUpdateSpeedLimit = viewModel::updateSpeedLimit
+                    )
+                    1 -> LinkGrabberScreen(
+                        isExamining = isExaminingUrl,
+                        lastResult = lastGrabResult,
+                        globalDownloadDir = settings.globalDownloadDirectory,
+                        autoOrganizeMode = settings.autoOrganizeBy,
+                        onExamineUrl = viewModel::examineUrl,
+                        onAddLinksToQueue = { links, folder ->
+                            viewModel.addGrabbedLinksToQueue(links, folder)
+                            currentTab = 0 // Switch to Queue tab after adding!
+                        }
+                    )
+                    2 -> StorageScreen(
+                        completedItems = completedDownloads,
+                        onTriggerDriveSync = viewModel::triggerDriveSync
+                    )
+                    3 -> DriveRemoteScreen(
+                        settings = settings,
+                        driveState = driveSyncState,
+                        remoteLogs = remoteLogs,
+                        isRemoteRunning = isRemoteRunning,
+                        onTriggerDriveSync = viewModel::triggerDriveSync,
+                        onUpdateDriveFolder = viewModel::setDriveFolder,
+                        onToggleGoogleAccount = viewModel::toggleGoogleAccount,
+                        onToggleRemoteServer = viewModel::toggleRemoteServer,
+                        onInjectRemoteTestLink = viewModel::injectRemoteTestLink
+                    )
+                }
             }
         }
     }
