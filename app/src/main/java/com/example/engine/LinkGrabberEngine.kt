@@ -159,48 +159,69 @@ class LinkGrabberEngine {
 
     private fun tryTikWmUserFeed(username: String, domain: String, sourceUrl: String): List<GrabbedLink> {
         val links = mutableListOf<GrabbedLink>()
+        val seenIds = mutableSetOf<String>()
         try {
             val cleanUser = username.replace("@", "").trim()
-            val formMediaType = "application/x-www-form-urlencoded; charset=utf-8".toMediaType()
-            val body = "unique_id=$cleanUser&count=35&cursor=0".toRequestBody(formMediaType)
-            val request = Request.Builder()
-                .url("https://www.tikwm.com/api/user/posts")
-                .post(body)
-                .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36")
-                .build()
+            var cursor = "0"
+            var page = 0
+            val maxPages = 5 // Fetch up to 5 pages (~175 videos)
 
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return emptyList()
-                val jsonStr = response.body?.string().orEmpty()
-                val json = JSONObject(jsonStr)
-                if (json.optInt("code", -1) == 0 && json.has("data")) {
-                    val dataObj = json.getJSONObject("data")
-                    val videosArr = if (dataObj.has("videos")) dataObj.getJSONArray("videos") else JSONArray()
-                    for (i in 0 until videosArr.length()) {
-                        val vid = videosArr.getJSONObject(i)
-                        val title = vid.optString("title", "TikTok Video #${i + 1}")
-                        val playUrl = vid.optString("hdplay", vid.optString("play", ""))
-                        val cover = vid.optString("cover", null)
-                        val videoId = vid.optString("id", "${i + 1}")
+            while (page < maxPages) {
+                val formMediaType = "application/x-www-form-urlencoded; charset=utf-8".toMediaType()
+                val body = "unique_id=$cleanUser&count=35&cursor=$cursor".toRequestBody(formMediaType)
+                val request = Request.Builder()
+                    .url("https://www.tikwm.com/api/user/posts")
+                    .post(body)
+                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36")
+                    .build()
 
-                        if (isValidMediaUrl(playUrl)) {
-                            val fullVidUrl = if (playUrl.startsWith("//")) "https:$playUrl" else playUrl
-                            links.add(
-                                GrabbedLink(
-                                    url = fullVidUrl,
-                                    title = title,
-                                    suggestedFileName = "tiktok_${cleanUser}_$videoId.mp4",
-                                    mediaType = "VIDEO",
-                                    estimatedSizeBytes = 0L,
-                                    thumbnailUrl = cover,
-                                    dimensions = "1080p HD Sin Marca",
-                                    sourcePageUrl = sourceUrl,
-                                    domain = domain
+                var hasMore = false
+                var nextCursor = "0"
+
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@use
+                    val jsonStr = response.body?.string().orEmpty()
+                    val json = JSONObject(jsonStr)
+                    if (json.optInt("code", -1) == 0 && json.has("data")) {
+                        val dataObj = json.getJSONObject("data")
+                        hasMore = dataObj.optBoolean("hasMore", false)
+                        nextCursor = dataObj.optString("cursor", "0")
+                        val videosArr = if (dataObj.has("videos")) dataObj.getJSONArray("videos") else JSONArray()
+
+                        for (i in 0 until videosArr.length()) {
+                            val vid = videosArr.getJSONObject(i)
+                            val videoId = vid.optString("id", "${page}_$i")
+                            if (!seenIds.add(videoId)) continue
+
+                            val title = vid.optString("title", "TikTok Video #${links.size + 1}")
+                            val playUrl = vid.optString("hdplay", vid.optString("play", ""))
+                            val cover = vid.optString("cover", null)
+
+                            if (isValidMediaUrl(playUrl)) {
+                                val fullVidUrl = if (playUrl.startsWith("//")) "https:$playUrl" else playUrl
+                                links.add(
+                                    GrabbedLink(
+                                        url = fullVidUrl,
+                                        title = title,
+                                        suggestedFileName = "tiktok_${cleanUser}_$videoId.mp4",
+                                        mediaType = "VIDEO",
+                                        estimatedSizeBytes = 0L,
+                                        thumbnailUrl = cover,
+                                        dimensions = "1080p HD Sin Marca",
+                                        sourcePageUrl = sourceUrl,
+                                        domain = domain
+                                    )
                                 )
-                            )
+                            }
                         }
                     }
                 }
+
+                if (!hasMore || nextCursor == "0" || nextCursor == cursor) {
+                    break
+                }
+                cursor = nextCursor
+                page++
             }
         } catch (_: Exception) {}
         return links
@@ -346,20 +367,36 @@ class LinkGrabberEngine {
      */
     private fun handleInstagramSniffing(url: String, domain: String): WebGrabResult {
         val expandedUrl = expandShortenedUrl(url)
-        val shortcodePattern = Pattern.compile("(?:/p/|/reel/|/reels/|/tv/|/share/p/)([A-Za-z0-9_-]+)")
+        val shortcodePattern = Pattern.compile("(?i)(?:/p/|/reel/|/reels/|/tv/|/share/p/|/share/reel/|/stories/[^/]+/)([A-Za-z0-9_-]+)")
         val matcher = shortcodePattern.matcher(expandedUrl)
         val shortcode = if (matcher.find()) matcher.group(1) else null
 
         val links = mutableListOf<GrabbedLink>()
 
         if (shortcode != null) {
-            // Strategy 1: InstaVideoSave Public API
-            val saveLinks = tryInstaVideoSaveApi(expandedUrl, url, domain)
-            if (saveLinks.isNotEmpty()) {
-                links.addAll(saveLinks)
+            // Strategy 1: SaveIG Ajax Search API
+            val saveIgLinks = trySaveIgApi(expandedUrl, url, domain)
+            if (saveIgLinks.isNotEmpty()) {
+                links.addAll(saveIgLinks)
             }
 
-            // Strategy 2: Cobalt Extractor
+            // Strategy 2: FastDL Public API
+            if (links.isEmpty()) {
+                val fastDlLinks = tryFastDlApi(expandedUrl, url, domain)
+                if (fastDlLinks.isNotEmpty()) {
+                    links.addAll(fastDlLinks)
+                }
+            }
+
+            // Strategy 3: InstaVideoSave Public API
+            if (links.isEmpty()) {
+                val saveLinks = tryInstaVideoSaveApi(expandedUrl, url, domain)
+                if (saveLinks.isNotEmpty()) {
+                    links.addAll(saveLinks)
+                }
+            }
+
+            // Strategy 4: Cobalt Extractor
             if (links.isEmpty()) {
                 val cobaltResult = tryCobaltExtractor(expandedUrl, domain)
                 if (cobaltResult != null && cobaltResult.links.isNotEmpty()) {
@@ -367,24 +404,19 @@ class LinkGrabberEngine {
                 }
             }
 
-            // Strategy 3: DDInstagram & VxInstagram Proxies
+            // Strategy 5: DDInstagram, VxInstagram & FixInstagram Proxies
             if (links.isEmpty()) {
-                val ddUrl = "https://ddinstagram.com/p/$shortcode/"
-                val ddResults = fetchWithBotUserAgent(ddUrl, url, domain, mutableSetOf(), "Instagram ($shortcode)")
-                if (ddResults.isNotEmpty()) {
-                    links.addAll(ddResults)
+                for (proxyHost in listOf("ddinstagram.com", "vxinstagram.com", "fixinstagram.com")) {
+                    val proxyUrl = "https://$proxyHost/p/$shortcode/"
+                    val proxyResults = fetchWithBotUserAgent(proxyUrl, url, domain, mutableSetOf(), "Instagram ($shortcode)")
+                    if (proxyResults.isNotEmpty()) {
+                        links.addAll(proxyResults)
+                        break
+                    }
                 }
             }
 
-            if (links.isEmpty()) {
-                val vxUrl = "https://vxinstagram.com/p/$shortcode/"
-                val vxResults = fetchWithBotUserAgent(vxUrl, url, domain, mutableSetOf(), "Instagram ($shortcode)")
-                if (vxResults.isNotEmpty()) {
-                    links.addAll(vxResults)
-                }
-            }
-
-            // Strategy 4: Instagram Embed Scraper
+            // Strategy 6: Instagram Embed Scraper
             if (links.isEmpty()) {
                 val embedLinks = tryInstagramEmbedScraper(shortcode, url, domain)
                 if (embedLinks.isNotEmpty()) {
@@ -392,7 +424,7 @@ class LinkGrabberEngine {
                 }
             }
 
-            // Strategy 5: Instagram Internal API v1
+            // Strategy 7: Instagram Internal API v1
             if (links.isEmpty()) {
                 val igApiLinks = tryInstagramInternalApi(shortcode, url, domain)
                 if (igApiLinks.isNotEmpty()) {
@@ -400,7 +432,7 @@ class LinkGrabberEngine {
                 }
             }
 
-            // Strategy 6: Instagram oEmbed Fallback
+            // Strategy 8: Instagram oEmbed Fallback
             if (links.isEmpty()) {
                 val oembedLinks = tryInstagramOembed(expandedUrl, url, domain)
                 if (oembedLinks.isNotEmpty()) {
@@ -414,10 +446,15 @@ class LinkGrabberEngine {
             if (profMatcher.find()) {
                 val username = profMatcher.group(1) ?: ""
                 if (username !in listOf("p", "reel", "reels", "tv", "stories", "explore", "direct")) {
-                    val ddProfile = "https://ddinstagram.com/$username/"
-                    val profLinks = fetchWithBotUserAgent(ddProfile, url, domain, mutableSetOf(), "Instagram @$username")
-                    if (profLinks.isNotEmpty()) {
-                        links.addAll(profLinks)
+                    val saveIgProfile = trySaveIgApi("https://www.instagram.com/$username/", url, domain)
+                    if (saveIgProfile.isNotEmpty()) {
+                        links.addAll(saveIgProfile)
+                    } else {
+                        val ddProfile = "https://ddinstagram.com/$username/"
+                        val profLinks = fetchWithBotUserAgent(ddProfile, url, domain, mutableSetOf(), "Instagram @$username")
+                        if (profLinks.isNotEmpty()) {
+                            links.addAll(profLinks)
+                        }
                     }
                 }
             }
@@ -441,6 +478,97 @@ class LinkGrabberEngine {
             links = emptyList(),
             errorMessage = "No se pudo extraer el contenido de Instagram. Verifica que la publicación sea pública (Reel, Foto o Carousel) y vuelve a intentarlo."
         )
+    }
+
+    private fun trySaveIgApi(url: String, sourceUrl: String, domain: String): List<GrabbedLink> {
+        val links = mutableListOf<GrabbedLink>()
+        try {
+            val formMediaType = "application/x-www-form-urlencoded; charset=utf-8".toMediaType()
+            val body = "q=${URLEncoder.encode(url, "UTF-8")}&t=media&lang=en".toRequestBody(formMediaType)
+            val request = Request.Builder()
+                .url("https://saveig.app/api/ajaxSearch")
+                .post(body)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+                .header("X-Requested-With", "XMLHttpRequest")
+                .header("Referer", "https://saveig.app/")
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return emptyList()
+                val jsonStr = response.body?.string().orEmpty()
+                val json = JSONObject(jsonStr)
+                val html = json.optString("data", "")
+                if (html.isNotBlank()) {
+                    val hrefPattern = Pattern.compile("(?i)href=[\"'](https?://[^\"']+)[\"'][^>]*>(?:[^<]*download|[^<]*descargar|[^<]*guardar)")
+                    val matcher = hrefPattern.matcher(html)
+                    while (matcher.find()) {
+                        val mediaUrl = unescapeJsonUrl(matcher.group(1).orEmpty())
+                        if (isValidMediaUrl(mediaUrl) && !mediaUrl.contains("saveig.app")) {
+                            val isVideo = mediaUrl.contains(".mp4") || mediaUrl.contains("video")
+                            val mediaType = if (isVideo) "VIDEO" else "IMAGE"
+                            val ext = if (isVideo) "mp4" else "jpg"
+                            links.add(
+                                GrabbedLink(
+                                    url = mediaUrl,
+                                    title = "Instagram Media (${links.size + 1})",
+                                    suggestedFileName = "instagram_media_${System.currentTimeMillis()}_${links.size + 1}.$ext",
+                                    mediaType = mediaType,
+                                    estimatedSizeBytes = 0L,
+                                    thumbnailUrl = if (!isVideo) mediaUrl else null,
+                                    dimensions = if (isVideo) "1080p HD Video" else "High Res Photo",
+                                    sourcePageUrl = sourceUrl,
+                                    domain = domain
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return links
+    }
+
+    private fun tryFastDlApi(url: String, sourceUrl: String, domain: String): List<GrabbedLink> {
+        val links = mutableListOf<GrabbedLink>()
+        try {
+            val jsonMediaType = "application/json; charset=utf-8".toMediaType()
+            val jsonBody = "{\"url\":\"$url\"}".toRequestBody(jsonMediaType)
+            val request = Request.Builder()
+                .url("https://v3.fastdl.app/api/")
+                .post(jsonBody)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                .header("Accept", "application/json")
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return emptyList()
+                val jsonStr = response.body?.string().orEmpty()
+                if (jsonStr.isBlank()) return emptyList()
+                val json = JSONObject(jsonStr)
+                if (json.has("url")) {
+                    val mediaUrl = json.getString("url")
+                    if (isValidMediaUrl(mediaUrl)) {
+                        val isVideo = mediaUrl.contains(".mp4") || mediaUrl.contains("video")
+                        val mediaType = if (isVideo) "VIDEO" else "IMAGE"
+                        val ext = if (isVideo) "mp4" else "jpg"
+                        links.add(
+                            GrabbedLink(
+                                url = mediaUrl,
+                                title = "Instagram HD Content",
+                                suggestedFileName = "instagram_fastdl_${System.currentTimeMillis()}.$ext",
+                                mediaType = mediaType,
+                                estimatedSizeBytes = 0L,
+                                thumbnailUrl = json.optString("thumb", null),
+                                dimensions = if (isVideo) "1080p HD" else "Alta Resolución",
+                                sourcePageUrl = sourceUrl,
+                                domain = domain
+                            )
+                        )
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return links
     }
 
     private fun tryInstaVideoSaveApi(url: String, sourceUrl: String, domain: String): List<GrabbedLink> {
@@ -1095,8 +1223,8 @@ class LinkGrabberEngine {
         return try {
             val request = Request.Builder()
                 .url(url)
-                .head()
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                .get()
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
                 .build()
             client.newCall(request).execute().use { response ->
                 response.request.url.toString()
