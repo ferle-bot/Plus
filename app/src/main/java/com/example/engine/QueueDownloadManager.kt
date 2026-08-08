@@ -1,6 +1,7 @@
 package com.example.engine
 
 import android.content.Context
+import android.media.MediaScannerConnection
 import com.example.data.AppSettings
 import com.example.data.DownloadDao
 import com.example.data.DownloadItem
@@ -105,28 +106,25 @@ class QueueDownloadManager(
 
     private fun startQueueMonitor() {
         scope.launch {
-            while (isActive) {
-                delay(1000)
+            downloadDao.getActiveQueue().collect { queue ->
                 if (_isGlobalQueuePaused.value) {
                     _globalSpeedBytesPerSec.value = 0L
-                    continue
+                    return@collect
                 }
 
-                downloadDao.getActiveQueue().collect { queue ->
-                    val currentlyDownloadingCount = activeJobs.size
-                    val maxAllowed = currentSettings.maxConcurrentDownloads.coerceAtLeast(1)
+                val currentlyDownloadingCount = activeJobs.size
+                val maxAllowed = currentSettings.maxConcurrentDownloads.coerceAtLeast(1)
 
-                    val pendingItems = queue.filter { it.status == "PENDING" }
-                    val availableSlots = (maxAllowed - currentlyDownloadingCount).coerceAtLeast(0)
+                val pendingItems = queue.filter { it.status == "PENDING" }
+                val availableSlots = (maxAllowed - currentlyDownloadingCount).coerceAtLeast(0)
 
-                    for (i in 0 until availableSlots.coerceAtMost(pendingItems.size)) {
-                        val itemToStart = pendingItems[i]
-                        if (!activeJobs.containsKey(itemToStart.id)) {
-                            val job = scope.launch {
-                                executeRealDownloadTask(itemToStart)
-                            }
-                            activeJobs[itemToStart.id] = job
+                for (i in 0 until availableSlots.coerceAtMost(pendingItems.size)) {
+                    val itemToStart = pendingItems[i]
+                    if (!activeJobs.containsKey(itemToStart.id)) {
+                        val job = scope.launch {
+                            executeRealDownloadTask(itemToStart)
                         }
+                        activeJobs[itemToStart.id] = job
                     }
                 }
             }
@@ -146,9 +144,18 @@ class QueueDownloadManager(
         var downloadedBytes = if (targetFile.exists()) targetFile.length() else 0L
 
         try {
+            val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
             val requestBuilder = Request.Builder()
                 .url(item.fileUrl)
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) PulseDownloader/1.0")
+                .header("User-Agent", userAgent)
+                .header("Accept", "*/*")
+                .header("Accept-Language", "en-US,en;q=0.9,es;q=0.8")
+
+            if (item.sourceUrl.isNotBlank()) {
+                requestBuilder.header("Referer", item.sourceUrl)
+            } else if (item.domain.isNotBlank()) {
+                requestBuilder.header("Referer", "https://${item.domain}/")
+            }
 
             if (downloadedBytes > 0) {
                 requestBuilder.header("Range", "bytes=$downloadedBytes-")
@@ -164,7 +171,8 @@ class QueueDownloadManager(
                     val retryResponse = client.newCall(
                         Request.Builder()
                             .url(item.fileUrl)
-                            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) PulseDownloader/1.0")
+                            .header("User-Agent", userAgent)
+                            .header("Accept", "*/*")
                             .build()
                     ).execute()
 
@@ -287,6 +295,16 @@ class QueueDownloadManager(
                     targetFolderPath = targetDir.absolutePath
                 )
                 downloadDao.updateDownload(currentItem)
+
+                // Scan file so Android OS MediaStore indexes it immediately
+                try {
+                    MediaScannerConnection.scanFile(
+                        context,
+                        arrayOf(targetFile.absolutePath),
+                        null,
+                        null
+                    )
+                } catch (_: Exception) {}
             }
         } finally {
             activeSpeeds.remove(item.id)

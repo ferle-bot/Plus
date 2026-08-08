@@ -84,51 +84,66 @@ class LinkGrabberEngine {
     }
 
     /**
-     * TikTok Dedicated Multi-Strategy Extractor
+     * TikTok Dedicated Multi-Strategy Extractor (Single Videos & Profile Crawling)
      */
     private fun handleTikTokSniffing(rawUrl: String, domain: String): WebGrabResult {
         val expandedUrl = expandShortenedUrl(rawUrl)
         val links = mutableListOf<GrabbedLink>()
 
-        // Strategy A: TikWM API
+        // Check if it's a TikTok user profile or showcase (e.g. tiktok.com/@username)
+        val profilePattern = Pattern.compile("tiktok\\.com/@([a-zA-Z0-9_.-]+)")
+        val profileMatcher = profilePattern.matcher(expandedUrl)
+        if (profileMatcher.find() && !expandedUrl.contains("/video/")) {
+            val username = profileMatcher.group(1) ?: ""
+            val profileLinks = tryTikWmUserFeed(username, domain, expandedUrl)
+            if (profileLinks.isNotEmpty()) {
+                return WebGrabResult(
+                    pageTitle = "Perfil de TikTok (@$username - ${profileLinks.size} videos)",
+                    sourceUrl = rawUrl,
+                    domain = domain,
+                    totalLinksFound = profileLinks.size,
+                    links = profileLinks
+                )
+            }
+        }
+
+        // Strategy A: TikWM Single Video API
         val tikWmLinks = tryTikWmApi(expandedUrl, domain)
         if (tikWmLinks.isNotEmpty()) {
-            return WebGrabResult(
-                pageTitle = "TikTok Media",
-                sourceUrl = rawUrl,
-                domain = domain,
-                totalLinksFound = tikWmLinks.size,
-                links = tikWmLinks
-            )
+            links.addAll(tikWmLinks)
         }
 
         // Strategy B: TiklyDown API
-        val tiklyLinks = tryTiklyDownApi(expandedUrl, domain)
-        if (tiklyLinks.isNotEmpty()) {
-            return WebGrabResult(
-                pageTitle = "TikTok Media",
-                sourceUrl = rawUrl,
-                domain = domain,
-                totalLinksFound = tiklyLinks.size,
-                links = tiklyLinks
-            )
+        if (links.isEmpty()) {
+            val tiklyLinks = tryTiklyDownApi(expandedUrl, domain)
+            if (tiklyLinks.isNotEmpty()) {
+                links.addAll(tiklyLinks)
+            }
         }
 
         // Strategy C: Cobalt API
-        val cobaltResult = tryCobaltExtractor(expandedUrl, domain)
-        if (cobaltResult != null && cobaltResult.links.isNotEmpty()) {
-            return cobaltResult
+        if (links.isEmpty()) {
+            val cobaltResult = tryCobaltExtractor(expandedUrl, domain)
+            if (cobaltResult != null && cobaltResult.links.isNotEmpty()) {
+                links.addAll(cobaltResult.links)
+            }
         }
 
         // Strategy D: TikTok oEmbed + Web Page Sniffing
-        val webLinks = fetchWithBotUserAgent(expandedUrl, rawUrl, domain, mutableSetOf(), "TikTok Video")
-        if (webLinks.isNotEmpty()) {
+        if (links.isEmpty()) {
+            val webLinks = fetchWithBotUserAgent(expandedUrl, rawUrl, domain, mutableSetOf(), "TikTok Video")
+            if (webLinks.isNotEmpty()) {
+                links.addAll(webLinks)
+            }
+        }
+
+        if (links.isNotEmpty()) {
             return WebGrabResult(
-                pageTitle = "TikTok Media",
+                pageTitle = "TikTok Media (${links.size} elementos)",
                 sourceUrl = rawUrl,
                 domain = domain,
-                totalLinksFound = webLinks.size,
-                links = webLinks
+                totalLinksFound = links.size,
+                links = links
             )
         }
 
@@ -140,6 +155,55 @@ class LinkGrabberEngine {
             links = emptyList(),
             errorMessage = "No se pudo extraer el video o fotos de TikTok. Verifica que la publicación sea pública y el enlace sea correcto."
         )
+    }
+
+    private fun tryTikWmUserFeed(username: String, domain: String, sourceUrl: String): List<GrabbedLink> {
+        val links = mutableListOf<GrabbedLink>()
+        try {
+            val cleanUser = username.replace("@", "").trim()
+            val formMediaType = "application/x-www-form-urlencoded; charset=utf-8".toMediaType()
+            val body = "unique_id=$cleanUser&count=35&cursor=0".toRequestBody(formMediaType)
+            val request = Request.Builder()
+                .url("https://www.tikwm.com/api/user/posts")
+                .post(body)
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36")
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return emptyList()
+                val jsonStr = response.body?.string().orEmpty()
+                val json = JSONObject(jsonStr)
+                if (json.optInt("code", -1) == 0 && json.has("data")) {
+                    val dataObj = json.getJSONObject("data")
+                    val videosArr = if (dataObj.has("videos")) dataObj.getJSONArray("videos") else JSONArray()
+                    for (i in 0 until videosArr.length()) {
+                        val vid = videosArr.getJSONObject(i)
+                        val title = vid.optString("title", "TikTok Video #${i + 1}")
+                        val playUrl = vid.optString("hdplay", vid.optString("play", ""))
+                        val cover = vid.optString("cover", null)
+                        val videoId = vid.optString("id", "${i + 1}")
+
+                        if (isValidMediaUrl(playUrl)) {
+                            val fullVidUrl = if (playUrl.startsWith("//")) "https:$playUrl" else playUrl
+                            links.add(
+                                GrabbedLink(
+                                    url = fullVidUrl,
+                                    title = title,
+                                    suggestedFileName = "tiktok_${cleanUser}_$videoId.mp4",
+                                    mediaType = "VIDEO",
+                                    estimatedSizeBytes = 0L,
+                                    thumbnailUrl = cover,
+                                    dimensions = "1080p HD Sin Marca",
+                                    sourcePageUrl = sourceUrl,
+                                    domain = domain
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return links
     }
 
     private fun tryTikWmApi(url: String, domain: String): List<GrabbedLink> {
@@ -278,68 +342,95 @@ class LinkGrabberEngine {
     }
 
     /**
-     * Instagram Dedicated Multi-Strategy Extractor
+     * Instagram Dedicated Multi-Strategy Extractor (Posts, Reels, Stories, Carousels, Profiles)
      */
     private fun handleInstagramSniffing(url: String, domain: String): WebGrabResult {
-        val shortcodePattern = Pattern.compile("(?:/p/|/reel/|/reels/|/tv/)([A-Za-z0-9_-]+)")
-        val matcher = shortcodePattern.matcher(url)
+        val expandedUrl = expandShortenedUrl(url)
+        val shortcodePattern = Pattern.compile("(?:/p/|/reel/|/reels/|/tv/|/share/p/)([A-Za-z0-9_-]+)")
+        val matcher = shortcodePattern.matcher(expandedUrl)
         val shortcode = if (matcher.find()) matcher.group(1) else null
 
+        val links = mutableListOf<GrabbedLink>()
+
         if (shortcode != null) {
-            // Strategy 1: Instagram Internal API v1 by Shortcode
-            val igApiLinks = tryInstagramInternalApi(shortcode, url, domain)
-            if (igApiLinks.isNotEmpty()) {
-                return WebGrabResult(
-                    pageTitle = "Publicación de Instagram ($shortcode)",
-                    sourceUrl = url,
-                    domain = domain,
-                    totalLinksFound = igApiLinks.size,
-                    links = igApiLinks
-                )
+            // Strategy 1: InstaVideoSave Public API
+            val saveLinks = tryInstaVideoSaveApi(expandedUrl, url, domain)
+            if (saveLinks.isNotEmpty()) {
+                links.addAll(saveLinks)
             }
 
-            // Strategy 2: Instagram Embed Scraper
-            val embedLinks = tryInstagramEmbedScraper(shortcode, url, domain)
-            if (embedLinks.isNotEmpty()) {
-                return WebGrabResult(
-                    pageTitle = "Publicación de Instagram ($shortcode)",
-                    sourceUrl = url,
-                    domain = domain,
-                    totalLinksFound = embedLinks.size,
-                    links = embedLinks
-                )
+            // Strategy 2: Cobalt Extractor
+            if (links.isEmpty()) {
+                val cobaltResult = tryCobaltExtractor(expandedUrl, domain)
+                if (cobaltResult != null && cobaltResult.links.isNotEmpty()) {
+                    links.addAll(cobaltResult.links)
+                }
             }
 
             // Strategy 3: DDInstagram & VxInstagram Proxies
-            val ddUrl = "https://ddinstagram.com/p/$shortcode/"
-            val ddResults = fetchWithBotUserAgent(ddUrl, url, domain, mutableSetOf(), "Instagram ($shortcode)")
-            if (ddResults.isNotEmpty()) {
-                return WebGrabResult(
-                    pageTitle = "Publicación de Instagram ($shortcode)",
-                    sourceUrl = url,
-                    domain = domain,
-                    totalLinksFound = ddResults.size,
-                    links = ddResults
-                )
+            if (links.isEmpty()) {
+                val ddUrl = "https://ddinstagram.com/p/$shortcode/"
+                val ddResults = fetchWithBotUserAgent(ddUrl, url, domain, mutableSetOf(), "Instagram ($shortcode)")
+                if (ddResults.isNotEmpty()) {
+                    links.addAll(ddResults)
+                }
             }
 
-            val vxUrl = "https://vxinstagram.com/p/$shortcode/"
-            val vxResults = fetchWithBotUserAgent(vxUrl, url, domain, mutableSetOf(), "Instagram ($shortcode)")
-            if (vxResults.isNotEmpty()) {
-                return WebGrabResult(
-                    pageTitle = "Publicación de Instagram ($shortcode)",
-                    sourceUrl = url,
-                    domain = domain,
-                    totalLinksFound = vxResults.size,
-                    links = vxResults
-                )
+            if (links.isEmpty()) {
+                val vxUrl = "https://vxinstagram.com/p/$shortcode/"
+                val vxResults = fetchWithBotUserAgent(vxUrl, url, domain, mutableSetOf(), "Instagram ($shortcode)")
+                if (vxResults.isNotEmpty()) {
+                    links.addAll(vxResults)
+                }
             }
 
-            // Strategy 4: Cobalt Extractor
-            val cobaltResult = tryCobaltExtractor(url, domain)
-            if (cobaltResult != null && cobaltResult.links.isNotEmpty()) {
-                return cobaltResult
+            // Strategy 4: Instagram Embed Scraper
+            if (links.isEmpty()) {
+                val embedLinks = tryInstagramEmbedScraper(shortcode, url, domain)
+                if (embedLinks.isNotEmpty()) {
+                    links.addAll(embedLinks)
+                }
             }
+
+            // Strategy 5: Instagram Internal API v1
+            if (links.isEmpty()) {
+                val igApiLinks = tryInstagramInternalApi(shortcode, url, domain)
+                if (igApiLinks.isNotEmpty()) {
+                    links.addAll(igApiLinks)
+                }
+            }
+
+            // Strategy 6: Instagram oEmbed Fallback
+            if (links.isEmpty()) {
+                val oembedLinks = tryInstagramOembed(expandedUrl, url, domain)
+                if (oembedLinks.isNotEmpty()) {
+                    links.addAll(oembedLinks)
+                }
+            }
+        } else {
+            // General Instagram page or Profile link
+            val profilePattern = Pattern.compile("instagram\\.com/([a-zA-Z0-9_.-]+)")
+            val profMatcher = profilePattern.matcher(expandedUrl)
+            if (profMatcher.find()) {
+                val username = profMatcher.group(1) ?: ""
+                if (username !in listOf("p", "reel", "reels", "tv", "stories", "explore", "direct")) {
+                    val ddProfile = "https://ddinstagram.com/$username/"
+                    val profLinks = fetchWithBotUserAgent(ddProfile, url, domain, mutableSetOf(), "Instagram @$username")
+                    if (profLinks.isNotEmpty()) {
+                        links.addAll(profLinks)
+                    }
+                }
+            }
+        }
+
+        if (links.isNotEmpty()) {
+            return WebGrabResult(
+                pageTitle = "Instagram Media (${links.size} detectados)",
+                sourceUrl = url,
+                domain = domain,
+                totalLinksFound = links.size,
+                links = links
+            )
         }
 
         return WebGrabResult(
@@ -350,6 +441,90 @@ class LinkGrabberEngine {
             links = emptyList(),
             errorMessage = "No se pudo extraer el contenido de Instagram. Verifica que la publicación sea pública (Reel, Foto o Carousel) y vuelve a intentarlo."
         )
+    }
+
+    private fun tryInstaVideoSaveApi(url: String, sourceUrl: String, domain: String): List<GrabbedLink> {
+        val links = mutableListOf<GrabbedLink>()
+        try {
+            val apiUrl = "https://api.v2.instavideosave.com/stat?url=${URLEncoder.encode(url, "UTF-8")}"
+            val request = Request.Builder()
+                .url(apiUrl)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                .header("Accept", "application/json")
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return emptyList()
+                val jsonStr = response.body?.string().orEmpty()
+                if (jsonStr.isBlank()) return emptyList()
+
+                val json = JSONObject(jsonStr)
+                if (json.has("video")) {
+                    val vidArr = json.getJSONArray("video")
+                    for (i in 0 until vidArr.length()) {
+                        val vObj = vidArr.getJSONObject(i)
+                        val videoUrl = vObj.optString("video", vObj.optString("url", ""))
+                        val thumb = vObj.optString("thumbnail", null)
+                        if (isValidMediaUrl(videoUrl)) {
+                            links.add(
+                                GrabbedLink(
+                                    url = videoUrl,
+                                    title = "Instagram Reel / Video #${i + 1}",
+                                    suggestedFileName = "instagram_video_${System.currentTimeMillis()}_${i + 1}.mp4",
+                                    mediaType = "VIDEO",
+                                    estimatedSizeBytes = 0L,
+                                    thumbnailUrl = thumb,
+                                    dimensions = "1080p HD Video",
+                                    sourcePageUrl = sourceUrl,
+                                    domain = domain
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return links
+    }
+
+    private fun tryInstagramOembed(url: String, sourceUrl: String, domain: String): List<GrabbedLink> {
+        val links = mutableListOf<GrabbedLink>()
+        try {
+            val oembedUrl = "https://api.instagram.com/oembed/?url=${URLEncoder.encode(url, "UTF-8")}"
+            val request = Request.Builder()
+                .url(oembedUrl)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return emptyList()
+                val jsonStr = response.body?.string().orEmpty()
+                if (jsonStr.isBlank()) return emptyList()
+
+                val json = JSONObject(jsonStr)
+                val title = json.optString("title", json.optString("author_name", "Instagram Post"))
+                val thumbUrl = json.optString("thumbnail_url", "")
+                val width = json.optInt("thumbnail_width", 1080)
+                val height = json.optInt("thumbnail_height", 1080)
+
+                if (isValidMediaUrl(thumbUrl)) {
+                    links.add(
+                        GrabbedLink(
+                            url = thumbUrl,
+                            title = title,
+                            suggestedFileName = "instagram_photo_${System.currentTimeMillis()}.jpg",
+                            mediaType = "IMAGE",
+                            estimatedSizeBytes = 0L,
+                            thumbnailUrl = thumbUrl,
+                            dimensions = "${width}x${height} HD",
+                            sourcePageUrl = sourceUrl,
+                            domain = domain
+                        )
+                    )
+                }
+            }
+        } catch (_: Exception) {}
+        return links
     }
 
     private fun tryInstagramInternalApi(shortcode: String, sourceUrl: String, domain: String): List<GrabbedLink> {
